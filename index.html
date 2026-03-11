@@ -343,6 +343,7 @@
     <div class="modal-title">Exercise Library</div>
     <input class="search-input" id="exerciseSearch" placeholder="🔍  Search exercises..." oninput="filterExercises()">
     <div class="filter-tabs" id="muscleFilterTabs"></div>
+    <div class="filter-tabs" id="equipFilterTabs"></div>
     <div id="exerciseLibraryList"></div>
     <button class="btn btn-primary btn-full" onclick="confirmExercisePick()">Add Selected</button>
   </div>
@@ -445,6 +446,16 @@ const EXERCISE_LIBRARY = [
   { id:'thruster', name:'Thruster', muscle:'full', equipment:'barbell' },
   { id:'burpee', name:'Burpee', muscle:'full', equipment:'bodyweight' },
   { id:'kettlebell_swing', name:'Kettlebell Swing', muscle:'full', equipment:'other' },
+  { id:'box_jump', name:'Box Jump', muscle:'full', equipment:'bodyweight' },
+  // LEGS (additions)
+  { id:'split_squat', name:'Bulgarian Split Squat', muscle:'legs', equipment:'dumbbell' },
+  // CORE (additions)
+  { id:'side_plank', name:'Side Plank', muscle:'core', equipment:'bodyweight' },
+  { id:'dead_bug', name:'Dead Bug', muscle:'core', equipment:'bodyweight' },
+  { id:'toe_touchers', name:'Toe Touchers', muscle:'core', equipment:'bodyweight' },
+  { id:'reverse_crunch', name:'Reverse Crunch', muscle:'core', equipment:'bodyweight' },
+  // SHOULDERS (additions)
+  { id:'rear_delt_fly', name:'Rear Deltoid Fly', muscle:'shoulders', equipment:'dumbbell' },
 ];
 
 const MUSCLE_COLORS = {
@@ -456,7 +467,7 @@ const MUSCLE_COLORS = {
 const MUSCLES = ['chest','back','shoulders','biceps','triceps','legs','glutes','core','calves','full'];
 
 // Helper: build default set targets
-function mkSets(n, w, r) { return Array.from({length:n}, () => ({weight:w||'',reps:r||''})); }
+function mkSets(n, w, r, t) { return Array.from({length:n}, () => ({weight:w||'',reps:r||'',useTime:t||false})); }
 
 // Default 10 routines — exercises are objects with per-set targets
 const DEFAULT_ROUTINES = [
@@ -513,7 +524,9 @@ let state = {
   pendingExercises: [],
   selectedExercises: [],
   muscleFilter: 'all',
+  equipFilter: 'all',
   progressExerciseId: null,
+  equipOverrides: {},  // exId -> equipment string override
 };
 
 let timerInterval = null;
@@ -524,13 +537,17 @@ let progressChart = null;
 // ============================================================
 // STORAGE
 // ============================================================
-function save() { localStorage.setItem('ironlog_v2', JSON.stringify({ routines: state.routines, history: state.history, activeWorkout: state.activeWorkout })); }
+function save() { localStorage.setItem('ironlog_v3', JSON.stringify({ routines: state.routines, history: state.history, activeWorkout: state.activeWorkout, equipOverrides: state.equipOverrides })); }
 function load() {
   try {
-    const d = JSON.parse(localStorage.getItem('ironlog_v2') || '{}');
+    // Migrate v2 data to v3 if needed
+const raw2 = localStorage.getItem('ironlog_v2');
+if (raw2 && !localStorage.getItem('ironlog_v3')) { localStorage.setItem('ironlog_v3', raw2); }
+const d = JSON.parse(localStorage.getItem('ironlog_v3') || '{}');
     state.routines = d.routines || DEFAULT_ROUTINES.map(r => JSON.parse(JSON.stringify(r)));
     state.history = d.history || [];
     state.activeWorkout = d.activeWorkout || null;
+    state.equipOverrides = d.equipOverrides || {};
     if (state.activeWorkout) { workoutStartTime = new Date(state.activeWorkout.startTime); }
   } catch(e) { state.routines = JSON.parse(JSON.stringify(DEFAULT_ROUTINES)); }
 }
@@ -614,13 +631,25 @@ function normalizeExercises(arr) {
 // Read pending exercise set targets from DOM inputs
 function readPendingFromDOM() {
   state.pendingExercises.forEach((ex, ei) => {
+    // Read the per-exercise time toggle
+    const toggleEl = document.getElementById(`re-timetoggle-${ei}`);
+    const isTime = toggleEl ? toggleEl.dataset.time === 'true' : (ex.sets[0]?.useTime || false);
     ex.sets.forEach((s, si) => {
       const wEl = document.getElementById(`re-w-${ei}-${si}`);
       const rEl = document.getElementById(`re-r-${ei}-${si}`);
-      if (wEl) s.weight = wEl.value;
-      if (rEl) s.reps   = rEl.value;
+      if (wEl) s.weight  = wEl.value;
+      if (rEl) s.reps    = rEl.value;
+      s.useTime = isTime;
     });
   });
+}
+
+function toggleExUseTime(ei) {
+  readPendingFromDOM();
+  const ex = state.pendingExercises[ei];
+  const newVal = !(ex.sets[0]?.useTime || false);
+  ex.sets.forEach(s => s.useTime = newVal);
+  renderRoutineExerciseList();
 }
 
 function openCreateRoutine() {
@@ -638,7 +667,7 @@ function editRoutine(id) {
   state.editingRoutineId = id;
   state.pendingExercises = normalizeExercises(r.exercises).map(e => ({
     id: e.id,
-    sets: (e.sets||[]).map(s => ({weight:s.weight||'',reps:s.reps||''}))
+    sets: (e.sets||[]).map(s => ({weight:s.weight||'',reps:s.reps||'',useTime:s.useTime||false}))
   }));
   document.getElementById('routineName').value = r.name;
   document.getElementById('routineModalTitle').textContent = 'Edit Routine';
@@ -664,12 +693,19 @@ function renderRoutineExerciseList() {
           <button class="btn btn-danger btn-sm" style="padding:4px 10px" onclick="removeRoutineExercise(${i})">✕</button>
         </div>
       </div>
-      <div class="re-set-grid header"><span>#</span><span>Weight (lbs)</span><span>Reps</span><span></span></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 12px 2px">
+        <div class="re-set-grid header" style="flex:1;padding:0"><span>#</span><span>Weight (lbs)</span><span>${exObj.sets[0]?.useTime?'Time (sec)':'Reps'}</span><span></span></div>
+        <button id="re-timetoggle-${i}" data-time="${exObj.sets[0]?.useTime||false}"
+          onclick="toggleExUseTime(${i})"
+          style="margin-left:8px;padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:${exObj.sets[0]?.useTime?'var(--accent3)':'var(--bg2)'};color:${exObj.sets[0]?.useTime?'#0a0a0f':'var(--text3)'};font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;letter-spacing:0.5px;text-transform:uppercase">
+          ${exObj.sets[0]?.useTime?'⏱ Time':'# Reps'}
+        </button>
+      </div>
       ${sets.map((s, si) => `
         <div class="re-set-grid">
           <div class="re-set-num">${si+1}</div>
           <input class="re-input" id="re-w-${i}-${si}" type="number" inputmode="decimal" placeholder="lbs" value="${s.weight||''}" min="0" step="0.5">
-          <input class="re-input" id="re-r-${i}-${si}" type="number" inputmode="numeric" placeholder="reps" value="${s.reps||''}" min="0">
+          <input class="re-input" id="re-r-${i}-${si}" type="number" inputmode="numeric" placeholder="${exObj.sets[0]?.useTime?'sec':'reps'}" value="${s.reps||''}" min="0">
           <button class="btn btn-danger btn-sm" style="padding:4px;width:28px;height:28px;font-size:11px;justify-content:center" onclick="readPendingFromDOM();removeRoutineSet(${i},${si})">✕</button>
         </div>`).join('')}
       <button class="re-add-set" onclick="readPendingFromDOM();addRoutineSet(${i})">＋ Add Set</button>
@@ -680,7 +716,7 @@ function renderRoutineExerciseList() {
 function addRoutineSet(ei) {
   const sets = state.pendingExercises[ei].sets;
   const last = sets[sets.length-1];
-  sets.push({weight: last?.weight||'', reps: last?.reps||''});
+  sets.push({weight: last?.weight||'', reps: last?.reps||'', useTime: last?.useTime||false});
   renderRoutineExerciseList();
 }
 
@@ -713,7 +749,7 @@ function saveRoutine() {
   if (!state.pendingExercises.length) { toast('Add at least one exercise', 'error'); return; }
   const exercises = state.pendingExercises.map(e => ({
     id: e.id,
-    sets: e.sets.map(s => ({weight: s.weight||'', reps: s.reps||''}))
+    sets: e.sets.map(s => ({weight: s.weight||'', reps: s.reps||'', useTime: s.useTime||false}))
   }));
   if (state.editingRoutineId) {
     const r = state.routines.find(r => r.id === state.editingRoutineId);
@@ -739,10 +775,35 @@ function deleteRoutine(id) {
 function openExercisePicker() {
   state.selectedExercises = [];
   state.muscleFilter = 'all';
+  state.equipFilter = 'all';
   document.getElementById('exerciseSearch').value = '';
   renderMuscleFilterTabs();
+  renderEquipFilterTabs();
   renderExerciseLibrary();
   openModal('exercisePickerModal');
+}
+
+function renderEquipFilterTabs() {
+  const equips = ['all','barbell','dumbbell','machine','bodyweight','cable','other'];
+  document.getElementById('equipFilterTabs').innerHTML = equips.map(e =>
+    `<div class="filter-tab ${state.equipFilter===e?'active':''}" onclick="setEquipFilter('${e}')">${e==='all'?'Any Equip':e.charAt(0).toUpperCase()+e.slice(1)}</div>`
+  ).join('');
+}
+
+function setEquipFilter(e) {
+  state.equipFilter = e;
+  renderEquipFilterTabs();
+  renderExerciseLibrary();
+}
+
+function setExEquipOverride(exId, equip) {
+  state.equipOverrides[exId] = equip;
+  save();
+  renderExerciseLibrary();
+}
+
+function getEffectiveEquip(ex) {
+  return state.equipOverrides[ex.id] || ex.equipment;
 }
 
 function renderMuscleFilterTabs() {
@@ -760,23 +821,36 @@ function setMuscleFilter(m) {
 
 function filterExercises() { renderExerciseLibrary(); }
 
+// (equipFilterTabs rendered in openExercisePicker and setEquipFilter above)
+
 function renderExerciseLibrary() {
   const q = document.getElementById('exerciseSearch').value.toLowerCase();
+  const equips = ['barbell','dumbbell','machine','bodyweight'];
   const list = EXERCISE_LIBRARY.filter(e => {
+    const eff = getEffectiveEquip(e);
     const matchMuscle = state.muscleFilter === 'all' || e.muscle === state.muscleFilter;
-    const matchQ = !q || e.name.toLowerCase().includes(q) || e.muscle.includes(q) || e.equipment.includes(q);
-    return matchMuscle && matchQ;
+    const matchEquip  = state.equipFilter  === 'all' || eff === state.equipFilter;
+    const matchQ = !q || e.name.toLowerCase().includes(q) || e.muscle.includes(q) || eff.includes(q);
+    return matchMuscle && matchEquip && matchQ;
   });
   const el = document.getElementById('exerciseLibraryList');
   el.innerHTML = list.map(e => {
     const sel = state.selectedExercises.includes(e.id);
     const already = state.pendingExercises.some(p => (typeof p === 'string' ? p : p.id) === e.id);
-    return `<div class="exercise-list-item ${sel?'selected':''}" onclick="${already?'':''} toggleExercisePick('${e.id}')" style="${already?'opacity:0.4;pointer-events:none':''}">
-      <div class="exercise-item-info">
+    const eff = getEffectiveEquip(e);
+    const equipBtns = equips.map(eq =>
+      `<button onclick="event.stopPropagation();setExEquipOverride('${e.id}','${eq}')"
+        style="padding:2px 7px;border-radius:6px;border:1px solid ${eff===eq?'var(--accent)':'var(--border)'};background:${eff===eq?'rgba(232,255,71,0.15)':'var(--bg4)'};color:${eff===eq?'var(--accent)':'var(--text3)'};font-size:10px;cursor:pointer;font-weight:600">${eq}</button>`
+    ).join('');
+    return `<div class="exercise-list-item ${sel?'selected':''}" onclick="${already?'void(0)':'toggleExercisePick(''+e.id+'')'}" style="${already?'opacity:0.5;pointer-events:none':''}">
+      <div class="exercise-item-info" style="flex:1">
         <div class="name">${e.name}</div>
-        <div style="margin-top:3px"><span class="muscle-badge badge-${e.muscle}">${e.muscle}</span> <span style="font-size:10px;color:var(--text3);margin-left:4px">${e.equipment}</span></div>
+        <div style="margin-top:4px;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+          <span class="muscle-badge badge-${e.muscle}">${e.muscle}</span>
+          ${equipBtns}
+        </div>
       </div>
-      <div style="font-size:18px">${already?'✓':sel?'☑️':'⬜'}</div>
+      <div style="font-size:18px;margin-left:8px">${already?'✓':sel?'☑️':'⬜'}</div>
     </div>`;
   }).join('') || '<div class="no-data">No exercises found</div>';
 }
@@ -791,7 +865,7 @@ function confirmExercisePick() {
   readPendingFromDOM();
   const existingIds = state.pendingExercises.map(e => e.id);
   const toAdd = state.selectedExercises.filter(id => !existingIds.includes(id));
-  toAdd.forEach(id => state.pendingExercises.push({id, sets: mkSets(3,'','')}));
+  toAdd.forEach(id => state.pendingExercises.push({id, sets: mkSets(3,'','',false)}));
   renderRoutineExerciseList();
   closeModal('exercisePickerModal');
   toast(`${toAdd.length} exercise(s) added`,'success');
@@ -818,6 +892,7 @@ function startWorkout(routineId) {
       return {
         weight: target.weight || '',
         reps:   target.reps   || '',
+        useTime: target.useTime || false,
         actualWeight: '',
         actualReps:   '',
         completed: false,
@@ -867,8 +942,28 @@ function updateTimer() {
 function renderActiveWorkout() {
   const content = document.getElementById('workoutContent');
   if (!state.activeWorkout) {
-    content.innerHTML = '<div class="empty-state"><div class="empty-icon">▶️</div><p>No active workout.<br>Select a routine to start!</p></div>';
     updateWorkoutNav(false);
+    // Show routine picker directly in the workout tab
+    const rList = state.routines.map(r => {
+      const exObjs = normalizeExercises(r.exercises || []);
+      const totalSets = exObjs.reduce((a,e) => a+(e.sets?.length||3), 0);
+      const lastDone = state.history.filter(h => h.routineId === r.id).sort((a,b) => new Date(b.date)-new Date(a.date))[0];
+      return `<div class="routine-card" onclick="startWorkout('${r.id}')">
+        <div class="routine-card-name">${r.name}</div>
+        <div class="routine-card-meta">
+          <span class="routine-meta-tag">${exObjs.length} exercises</span>
+          <span class="routine-meta-tag">${totalSets} sets</span>
+          ${lastDone ? `<span class="routine-meta-tag">Last: ${formatDate(lastDone.date)}</span>` : '<span class="routine-meta-tag">Never done</span>'}
+        </div>
+        <div class="routine-card-exercises">${exObjs.map(e=>getExercise(e.id)?.name||e.id).slice(0,4).join(', ')}${exObjs.length>4?` +${exObjs.length-4} more`:''}</div>
+      </div>`;
+    }).join('');
+    content.innerHTML = `
+      <div style="padding:4px 0 12px">
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:2px;margin-bottom:4px">Start a Workout</div>
+        <div style="font-size:13px;color:var(--text3)">Tap a routine below to begin</div>
+      </div>
+      ${rList || '<div class="empty-state"><div class="empty-icon">🏋️</div><p>No routines yet.<br>Go to Routines to create one!</p></div>'}`;
     return;
   }
   const w = state.activeWorkout;
@@ -888,13 +983,13 @@ function renderActiveWorkout() {
         <span class="exercise-block-muscle">${ex.muscle}</span>
       </div>
       <div class="sets-header">
-        <span>Set</span><span>Previous</span><span>Weight</span><span>Reps</span><span></span>
+        <span>Set</span><span>Previous</span><span>Weight</span><span>${ex.sets[0]?.useTime?'Time (s)':'Reps'}</span><span></span>
       </div>
       ${ex.sets.map((set, si) => `
         <div class="set-row ${set.completed?'completed':''}" id="set-${ei}-${si}">
           <div class="set-num">${si+1}</div>
-          <div class="set-prev">${set.prevWeight||'—'}×${set.prevReps||'—'}</div>
-          <input class="set-input ${set.completed?'completed-input':''}" type="number" inputmode="decimal" placeholder="${set.weight||'0'}" value="${set.actualWeight||set.weight||''}" onchange="updateSet(${ei},${si},'actualWeight',this.value)" min="0" step="0.5">
+          <div class="set-prev">${set.useTime?(set.prevWeight?set.prevWeight+'s':'—'):(set.prevWeight||'—')+'×'+(set.prevReps||'—')}</div>
+          <input class="set-input ${set.completed?'completed-input':''}" type="number" inputmode="decimal" placeholder="${set.weight||'0'}" value="${set.actualWeight||set.weight||''}" onchange="updateSet(${ei},${si},'actualWeight',this.value)" min="0" step="0.5" ${set.useTime?'style="opacity:0.35;pointer-events:none"':''}>
           <input class="set-input ${set.completed?'completed-input':''}" type="number" inputmode="numeric" placeholder="${set.reps||'0'}" value="${set.actualReps||set.reps||''}" onchange="updateSet(${ei},${si},'actualReps',this.value)" min="0">
           <button class="set-check ${set.completed?'done':''}" onclick="toggleSet(${ei},${si})">✓</button>
         </div>`).join('')}
