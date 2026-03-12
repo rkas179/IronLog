@@ -697,8 +697,8 @@ function renderRoutineExerciseList() {
         <div class="re-set-grid header" style="flex:1;padding:0"><span>#</span><span>Weight (lbs)</span><span>${exObj.sets[0]?.useTime?'Time (sec)':'Reps'}</span><span></span></div>
         <button id="re-timetoggle-${i}" data-time="${exObj.sets[0]?.useTime||false}"
           onclick="toggleExUseTime(${i})"
-          style="margin-left:8px;padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:${exObj.sets[0]?.useTime?'var(--accent3)':'var(--bg2)'};color:${exObj.sets[0]?.useTime?'#0a0a0f':'var(--text3)'};font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;letter-spacing:0.5px;text-transform:uppercase">
-          ${exObj.sets[0]?.useTime?'⏱ Time':'# Reps'}
+          style="margin-left:8px;padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:${exObj.sets[0]?.useTime?'var(--accent3)':'var(--bg2)'};color:${exObj.sets[0]?.useTime?'#000':'var(--text3)'};font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;letter-spacing:0.5px;text-transform:uppercase">
+          ${exObj.sets[0]?.useTime?'Time':'Reps'}
         </button>
       </div>
       ${sets.map((s, si) => `
@@ -842,7 +842,8 @@ function renderExerciseLibrary() {
       `<button onclick="event.stopPropagation();setExEquipOverride('${e.id}','${eq}')"
         style="padding:2px 7px;border-radius:6px;border:1px solid ${eff===eq?'var(--accent)':'var(--border)'};background:${eff===eq?'rgba(232,255,71,0.15)':'var(--bg4)'};color:${eff===eq?'var(--accent)':'var(--text3)'};font-size:10px;cursor:pointer;font-weight:600">${eq}</button>`
     ).join('');
-    return `<div class="exercise-list-item ${sel?'selected':''}" onclick="${already?'void(0)':'toggleExercisePick(''+e.id+'')'}" style="${already?'opacity:0.5;pointer-events:none':''}">
+    const clickHandler = already ? '' : `onclick="toggleExercisePick('${e.id}')"`;
+    return `<div class="exercise-list-item ${sel?'selected':''}" ${clickHandler} style="${already?'opacity:0.5;pointer-events:none;cursor:default':'cursor:pointer'}">
       <div class="exercise-item-info" style="flex:1">
         <div class="name">${e.name}</div>
         <div style="margin-top:4px;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
